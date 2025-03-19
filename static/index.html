@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SecureText - Share Text Safely</title>
+    <style>
+      :root {
+        --primary: #4a6fa5;
+        --secondary: #166088;
+        --dark: #333;
+        --light: #f8f9fa;
+        --success: #28a745;
+        --danger: #dc3545;
+        --background: #f8f9fa;
+        --text: #333;
+        --container-bg: white;
+        --border: #ccc;
+        --shadow: rgba(0, 0, 0, 0.1);
+      }
+
+      [data-theme="dark"] {
+        --background: #1a1a1a;
+        --text: #e0e0e0;
+        --container-bg: #2c2c2c;
+        --border: #555;
+        --shadow: rgba(0, 0, 0, 0.5);
+        --light: #2c2c2c;
+        --dark: #e0e0e0;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+
+      body {
+        background-color: var(--background);
+        color: var(--text);
+        line-height: 1.6;
+        padding: 20px;
+        max-width: 800px;
+        margin: 0 auto;
+        transition: background-color 0.3s, color 0.3s;
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 2rem;
+        padding: 1rem;
+      }
+
+      h1 {
+        color: var(--primary);
+        margin-bottom: 0.5rem;
+      }
+
+      .instructions {
+        background-color: var(--container-bg);
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 4px var(--shadow);
+        font-size: 0.95rem;
+      }
+
+      .instructions h3 {
+        color: var(--primary);
+        margin-bottom: 0.5rem;
+      }
+
+      .instructions ol {
+        padding-left: 1.5rem;
+      }
+
+      nav {
+        display: flex;
+        justify-content: center;
+        gap: 1rem;
+        margin: 1rem 0;
+      }
+
+      nav a {
+        text-decoration: none;
+        color: var(--secondary);
+        font-weight: bold;
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        transition: background-color 0.3s;
+      }
+
+      nav a:hover {
+        background-color: rgba(74, 111, 165, 0.1);
+      }
+
+      .container {
+        background-color: var(--container-bg);
+        padding: 2rem;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px var(--shadow);
+        transition: background-color 0.3s;
+      }
+
+      textarea {
+        width: 100%;
+        height: 200px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        resize: vertical;
+        background-color: var(--container-bg);
+        color: var(--text);
+        transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+      }
+
+      input[type="text"] {
+        width: 100%;
+        padding: 0.75rem;
+        margin-bottom: 1rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background-color: var(--container-bg);
+        color: var(--text);
+        transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+      }
+
+      button {
+        background-color: var(--primary);
+        color: white;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: bold;
+        transition: background-color 0.3s;
+      }
+
+      button:hover {
+        background-color: var(--secondary);
+      }
+
+      button:disabled {
+        background-color: #999;
+        cursor: not-allowed;
+      }
+
+      .result {
+        margin-top: 1.5rem;
+        padding: 1rem;
+        background-color: rgba(74, 111, 165, 0.1);
+        border-radius: 4px;
+        display: none;
+        transition: background-color 0.3s;
+      }
+
+      .code-display {
+        font-family: "Courier New", monospace;
+        font-size: 1.8rem;
+        letter-spacing: 4px;
+        color: var(--secondary);
+        text-align: center;
+        margin: 1rem 0;
+        padding: 0.5rem;
+        background-color: var(--container-bg);
+        border: 2px dashed var(--primary);
+        border-radius: 4px;
+        user-select: all;
+        transition: background-color 0.3s, color 0.3s;
+      }
+
+      .text-display {
+        font-family: "Courier New", monospace;
+        background-color: var(--container-bg);
+        padding: 1rem;
+        border: 1px solid var(--primary);
+        border-radius: 4px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        transition: background-color 0.3s;
+      }
+
+      .copy-btn {
+        margin-top: 0.5rem;
+        padding: 0.5rem 1rem;
+        font-size: 0.9rem;
+        background-color: var(--success);
+      }
+
+      .copy-btn:hover {
+        background-color: #218838;
+      }
+
+      .message {
+        padding: 1rem;
+        margin-top: 1rem;
+        border-radius: 4px;
+        display: none;
+      }
+
+      .success {
+        background-color: rgba(40, 167, 69, 0.1);
+        color: var(--success);
+      }
+
+      .error {
+        background-color: rgba(220, 53, 69, 0.1);
+        color: var(--danger);
+      }
+
+      footer {
+        text-align: center;
+        margin-top: 2rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        color: #666;
+        font-size: 0.9rem;
+        transition: border-color 0.3s;
+      }
+
+      .theme-toggle {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        background: none;
+        border: none;
+        font-size: 1.5rem;
+        cursor: pointer;
+        color: var(--text);
+        transition: color 0.3s;
+      }
+
+      @media (max-width: 600px) {
+        .container {
+          padding: 1rem;
+        }
+        button {
+          width: 100%;
+        }
+        .code-display {
+          font-size: 1.4rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <button class="theme-toggle" id="theme-toggle">🌙</button>
+    <header>
+      <h1>SecureText</h1>
+      <p>Safely share messages with links that expire</p>
+    </header>
+
+    <div class="instructions">
+      <h3>How to Use SecureText</h3>
+      <ol>
+        <li>Click "Send a Message" to write your message.</li>
+        <li>Click "Get Code" to create a special 5-character code.</li>
+        <li>Copy the code and share it with your friend.</li>
+        <li>
+          Your friend clicks "View a Message," enters the code, and sees your
+          message.
+        </li>
+        <li>The message disappears after 24 hours!</li>
+      </ol>
+    </div>
+
+    <nav>
+      <a href="#" id="create-link">Send a Message</a>
+      <a href="#" id="retrieve-link">View a Message</a>
+    </nav>
+
+    <div class="container" id="create-container">
+      <h2>Create a Secure Message</h2>
+      <p>Type your message below to get a special code.</p>
+      <textarea
+        id="text-input"
+        placeholder="Type your message here..."
+      ></textarea>
+      <button id="submit-btn">Get Code</button>
+
+      <div class="result" id="result">
+        <p>Your special code:</p>
+        <div class="code-display" id="code-display"></div>
+        <button class="copy-btn" id="copy-code-btn">Copy Code</button>
+        <p>Share this code—it’s valid for 24 hours.</p>
+      </div>
+      <div class="message" id="create-message"></div>
+    </div>
+
+    <div class="container" id="retrieve-container" style="display: none">
+      <h2>View a Secure Message</h2>
+      <p>Enter the 5-character code to see the message.</p>
+      <input
+        type="text"
+        id="code-input"
+        placeholder="Enter code (like X7K9P)"
+        maxlength="5"
+      />
+      <button id="retrieve-btn">Show Message</button>
+
+      <div class="result" id="retrieved-text">
+        <h3>Your Message:</h3>
+        <div class="text-display" id="text-content"></div>
+        <button class="copy-btn" id="copy-text-btn">Copy Message</button>
+      </div>
+      <div class="message" id="retrieve-message"></div>
+    </div>
+
+    <footer>
+      <p>SecureText © 2025 - Messages disappear after 24 hours</p>
+    </footer>
+
+    <script>
+      const createLink = document.getElementById("create-link");
+      const retrieveLink = document.getElementById("retrieve-link");
+      const createContainer = document.getElementById("create-container");
+      const retrieveContainer = document.getElementById("retrieve-container");
+      const textInput = document.getElementById("text-input");
+      const submitBtn = document.getElementById("submit-btn");
+      const result = document.getElementById("result");
+      const codeDisplay = document.getElementById("code-display");
+      const copyCodeBtn = document.getElementById("copy-code-btn");
+      const codeInput = document.getElementById("code-input");
+      const retrieveBtn = document.getElementById("retrieve-btn");
+      const retrievedText = document.getElementById("retrieved-text");
+      const textContent = document.getElementById("text-content");
+      const copyTextBtn = document.getElementById("copy-text-btn");
+      const themeToggle = document.getElementById("theme-toggle");
+      const createMessage = document.getElementById("create-message");
+      const retrieveMessage = document.getElementById("retrieve-message");
+
+      // Theme toggle functionality
+      themeToggle.addEventListener("click", () => {
+        const currentTheme =
+          document.documentElement.getAttribute("data-theme");
+        if (currentTheme === "dark") {
+          document.documentElement.removeAttribute("data-theme");
+          themeToggle.textContent = "🌙";
+        } else {
+          document.documentElement.setAttribute("data-theme", "dark");
+          themeToggle.textContent = "☀️";
+        }
+      });
+
+      // Navigation between sections
+      createLink.addEventListener("click", (e) => {
+        e.preventDefault();
+        createContainer.style.display = "block";
+        retrieveContainer.style.display = "none";
+        result.style.display = codeDisplay.textContent ? "block" : "none"; // Keep code visible if exists
+        retrieveMessage.style.display = "none";
+        createMessage.style.display = "none";
+        submitBtn.disabled = !!codeDisplay.textContent; // Disable if code exists
+      });
+
+      retrieveLink.addEventListener("click", (e) => {
+        e.preventDefault();
+        createContainer.style.display = "none";
+        retrieveContainer.style.display = "block";
+        retrievedText.style.display = "none";
+        createMessage.style.display = "none";
+        retrieveMessage.style.display = "none";
+      });
+
+      // Create message and get code
+      submitBtn.addEventListener("click", async () => {
+        const text = textInput.value.trim();
+        if (!text) {
+          showMessage("Please type a message first.", "error", "create");
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text }),
+          });
+          const data = await response.json();
+
+          if (response.ok) {
+            codeDisplay.textContent = data.code;
+            result.style.display = "block";
+            textInput.value = "";
+            submitBtn.textContent = "Code Generated";
+            submitBtn.disabled = true; // Disable until reset
+            showMessage(
+              "Code created! Share it with your friend.",
+              "success",
+              "create"
+            );
+            localStorage.setItem("lastGeneratedCode", data.code); // Store code
+            setTimeout(() => (submitBtn.textContent = "Get Code"), 2000);
+            result.scrollIntoView({ behavior: "smooth" }); // Ensure code is visible
+          } else {
+            showMessage(
+              data.error || "Something went wrong.",
+              "error",
+              "create"
+            );
+          }
+        } catch (error) {
+          showMessage("Can't reach the server.", "error", "create");
+        }
+      });
+
+      // Copy code to clipboard
+      copyCodeBtn.addEventListener("click", () => {
+        navigator.clipboard
+          .writeText(codeDisplay.textContent)
+          .then(() => {
+            copyCodeBtn.textContent = "Copied";
+            showMessage(
+              "Code copied! Send it to your friend.",
+              "success",
+              "create"
+            );
+            submitBtn.disabled = false; // Re-enable after copying
+            setTimeout(() => (copyCodeBtn.textContent = "Copy Code"), 2000);
+          })
+          .catch(() =>
+            showMessage("Couldn't copy the code.", "error", "create")
+          );
+      });
+
+      // Retrieve message with code
+      retrieveBtn.addEventListener("click", async () => {
+        const code = codeInput.value.trim().toUpperCase();
+        if (!code || code.length !== 5) {
+          showMessage("Enter a valid 5-character code.", "error", "retrieve");
+          return;
+        }
+
+        try {
+          const response = await fetch(`/api/retrieve/${code}`);
+          const data = await response.json();
+
+          if (response.ok) {
+            textContent.textContent = data.text;
+            retrievedText.style.display = "block";
+            const expiresAt = new Date(
+              Date.now() + 24 * 60 * 60 * 1000
+            ).toLocaleString();
+            retrievedText.insertAdjacentHTML(
+              "beforeend",
+              `<p style="font-size: 0.9rem; color: var(--secondary);">Expires: ${expiresAt}</p>`
+            );
+            codeInput.value = "";
+            showMessage(
+              "Message retrieved successfully!",
+              "success",
+              "retrieve"
+            );
+            retrievedText.scrollIntoView({ behavior: "smooth" });
+          } else {
+            showMessage(
+              data.error || "Code is invalid or expired.",
+              "error",
+              "retrieve"
+            );
+            retrievedText.style.display = "none";
+          }
+        } catch (error) {
+          showMessage("Can't reach the server.", "error", "retrieve");
+          retrievedText.style.display = "none";
+        }
+      });
+
+      // Copy retrieved message to clipboard
+      copyTextBtn.addEventListener("click", () => {
+        navigator.clipboard
+          .writeText(textContent.textContent)
+          .then(() => {
+            copyTextBtn.textContent = "Copied";
+            showMessage(
+              "Message copied to your clipboard!",
+              "success",
+              "retrieve"
+            );
+            setTimeout(() => (copyTextBtn.textContent = "Copy Message"), 2000);
+          })
+          .catch(() =>
+            showMessage("Couldn't copy the message.", "error", "retrieve")
+          );
+      });
+
+      // Show temporary success/error messages
+      function showMessage(msg, type = "success", section = "create") {
+        const messageElement =
+          section === "create" ? createMessage : retrieveMessage;
+        messageElement.className = `message ${type}`;
+        messageElement.textContent = msg;
+        messageElement.style.display = "block";
+        setTimeout(() => (messageElement.style.display = "none"), 3000);
+      }
+
+      // Restore last generated code on page load
+      window.addEventListener("load", () => {
+        const lastCode = localStorage.getItem("lastGeneratedCode");
+        if (lastCode) {
+          codeDisplay.textContent = lastCode;
+          result.style.display = "block";
+          submitBtn.disabled = true; // Disable until reset or copied
+        }
+      });
+    </script>
+  </body>
+</html>
