@@ -158,8 +158,8 @@
 
       .code-display {
         font-family: "Courier New", monospace;
-        font-size: 1.8rem;
-        letter-spacing: 4px;
+        font-size: 2rem;
+        letter-spacing: 8px;
         color: var(--secondary);
         text-align: center;
         margin: 1rem 0;
@@ -232,6 +232,27 @@
         transition: color 0.3s;
       }
 
+      /* Add media query for mobile screens */
+      @media (max-width: 768px) {
+        .theme-toggle {
+          position: relative;
+          top: auto;
+          right: auto;
+          margin: 10px;
+          /* Or use a different positioning approach */
+        }
+      }
+
+      .action-row {
+        display: flex;
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .action-row button {
+        flex: 1;
+      }
+
       @media (max-width: 600px) {
         .container {
           padding: 1rem;
@@ -256,7 +277,7 @@
       <h3>How to Use SecureText</h3>
       <ol>
         <li>Click "Send a Message" to write your message.</li>
-        <li>Click "Get Code" to create a special 5-character code.</li>
+        <li>Click "Get Code" to create a special 3-digit code.</li>
         <li>Copy the code and share it with your friend.</li>
         <li>
           Your friend clicks "View a Message," enters the code, and sees your
@@ -283,20 +304,23 @@
       <div class="result" id="result">
         <p>Your special code:</p>
         <div class="code-display" id="code-display"></div>
-        <button class="copy-btn" id="copy-code-btn">Copy Code</button>
-        <p>Share this code—it’s valid for 24 hours.</p>
+        <div class="action-row">
+          <button class="copy-btn" id="copy-code-btn">Copy Code</button>
+          <button id="new-code-btn">New Message</button>
+        </div>
+        <p>Share this code—it's valid for 24 hours.</p>
       </div>
       <div class="message" id="create-message"></div>
     </div>
 
     <div class="container" id="retrieve-container" style="display: none">
       <h2>View a Secure Message</h2>
-      <p>Enter the 5-character code to see the message.</p>
+      <p>Enter the 3-digit code to see the message.</p>
       <input
         type="text"
         id="code-input"
-        placeholder="Enter code (like X7K9P)"
-        maxlength="5"
+        placeholder="Enter code (like 123)"
+        maxlength="3"
       />
       <button id="retrieve-btn">Show Message</button>
 
@@ -322,6 +346,7 @@
       const result = document.getElementById("result");
       const codeDisplay = document.getElementById("code-display");
       const copyCodeBtn = document.getElementById("copy-code-btn");
+      const newCodeBtn = document.getElementById("new-code-btn");
       const codeInput = document.getElementById("code-input");
       const retrieveBtn = document.getElementById("retrieve-btn");
       const retrievedText = document.getElementById("retrieved-text");
@@ -344,6 +369,17 @@
         }
       });
 
+      // Reset the create form to start a new message
+      function resetCreateForm() {
+        textInput.value = "";
+        codeDisplay.textContent = "";
+        result.style.display = "none";
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Get Code";
+        localStorage.removeItem("lastGeneratedCode");
+        createMessage.style.display = "none";
+      }
+
       // Navigation between sections
       createLink.addEventListener("click", (e) => {
         e.preventDefault();
@@ -352,7 +388,6 @@
         result.style.display = codeDisplay.textContent ? "block" : "none"; // Keep code visible if exists
         retrieveMessage.style.display = "none";
         createMessage.style.display = "none";
-        submitBtn.disabled = !!codeDisplay.textContent; // Disable if code exists
       });
 
       retrieveLink.addEventListener("click", (e) => {
@@ -373,6 +408,9 @@
         }
 
         try {
+          submitBtn.disabled = true;
+          submitBtn.textContent = "Generating...";
+
           const response = await fetch("/api/create", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -384,17 +422,16 @@
             codeDisplay.textContent = data.code;
             result.style.display = "block";
             textInput.value = "";
-            submitBtn.textContent = "Code Generated";
-            submitBtn.disabled = true; // Disable until reset
             showMessage(
               "Code created! Share it with your friend.",
               "success",
               "create"
             );
             localStorage.setItem("lastGeneratedCode", data.code); // Store code
-            setTimeout(() => (submitBtn.textContent = "Get Code"), 2000);
             result.scrollIntoView({ behavior: "smooth" }); // Ensure code is visible
           } else {
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Get Code";
             showMessage(
               data.error || "Something went wrong.",
               "error",
@@ -402,8 +439,16 @@
             );
           }
         } catch (error) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Get Code";
           showMessage("Can't reach the server.", "error", "create");
         }
+      });
+
+      // New message button
+      newCodeBtn.addEventListener("click", () => {
+        resetCreateForm();
+        showMessage("Ready for a new message!", "success", "create");
       });
 
       // Copy code to clipboard
@@ -417,7 +462,6 @@
               "success",
               "create"
             );
-            submitBtn.disabled = false; // Re-enable after copying
             setTimeout(() => (copyCodeBtn.textContent = "Copy Code"), 2000);
           })
           .catch(() =>
@@ -428,24 +472,34 @@
       // Retrieve message with code
       retrieveBtn.addEventListener("click", async () => {
         const code = codeInput.value.trim().toUpperCase();
-        if (!code || code.length !== 5) {
-          showMessage("Enter a valid 5-character code.", "error", "retrieve");
+        if (!code || code.length !== 3) {
+          showMessage("Enter a valid 3-digit code.", "error", "retrieve");
           return;
         }
 
         try {
+          retrieveBtn.disabled = true;
+          retrieveBtn.textContent = "Loading...";
+
           const response = await fetch(`/api/retrieve/${code}`);
           const data = await response.json();
 
           if (response.ok) {
             textContent.textContent = data.text;
             retrievedText.style.display = "block";
+            // Remove any existing expiration text before adding new one
+            const existingExpiry =
+              retrievedText.querySelector("p[data-expiry]");
+            if (existingExpiry) {
+              existingExpiry.remove();
+            }
+
             const expiresAt = new Date(
               Date.now() + 24 * 60 * 60 * 1000
             ).toLocaleString();
             retrievedText.insertAdjacentHTML(
               "beforeend",
-              `<p style="font-size: 0.9rem; color: var(--secondary);">Expires: ${expiresAt}</p>`
+              `<p data-expiry="true" style="font-size: 0.9rem; color: var(--secondary);">Expires: ${expiresAt}</p>`
             );
             codeInput.value = "";
             showMessage(
@@ -462,9 +516,14 @@
             );
             retrievedText.style.display = "none";
           }
+
+          retrieveBtn.disabled = false;
+          retrieveBtn.textContent = "Show Message";
         } catch (error) {
           showMessage("Can't reach the server.", "error", "retrieve");
           retrievedText.style.display = "none";
+          retrieveBtn.disabled = false;
+          retrieveBtn.textContent = "Show Message";
         }
       });
 
@@ -502,7 +561,6 @@
         if (lastCode) {
           codeDisplay.textContent = lastCode;
           result.style.display = "block";
-          submitBtn.disabled = true; // Disable until reset or copied
         }
       });
     </script>
