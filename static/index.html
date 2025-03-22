@@ -3,6 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Prevent browser caching of this HTML file -->
+    <meta
+      http-equiv="Cache-Control"
+      content="no-store, no-cache, must-revalidate, max-age=0"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>SecureText - Share Text Safely</title>
     <style>
       :root {
@@ -210,6 +217,11 @@
         color: var(--danger);
       }
 
+      .loading {
+        background-color: rgba(74, 111, 165, 0.1);
+        color: var(--primary);
+      }
+
       footer {
         text-align: center;
         margin-top: 2rem;
@@ -232,14 +244,12 @@
         transition: color 0.3s;
       }
 
-      /* Add media query for mobile screens */
       @media (max-width: 768px) {
         .theme-toggle {
           position: relative;
           top: auto;
           right: auto;
           margin: 10px;
-          /* Or use a different positioning approach */
         }
       }
 
@@ -308,7 +318,7 @@
           <button class="copy-btn" id="copy-code-btn">Copy Code</button>
           <button id="new-code-btn">New Message</button>
         </div>
-        <p>Share this code—it's valid for 24 hours.</p>
+        <p>Share this code—it’s valid for 24 hours.</p>
       </div>
       <div class="message" id="create-message"></div>
     </div>
@@ -330,6 +340,9 @@
         <button class="copy-btn" id="copy-text-btn">Copy Message</button>
       </div>
       <div class="message" id="retrieve-message"></div>
+      <div class="message loading" id="retrieve-loading" style="display: none">
+        Loading...
+      </div>
     </div>
 
     <footer>
@@ -355,6 +368,7 @@
       const themeToggle = document.getElementById("theme-toggle");
       const createMessage = document.getElementById("create-message");
       const retrieveMessage = document.getElementById("retrieve-message");
+      const retrieveLoading = document.getElementById("retrieve-loading");
 
       // Theme toggle functionality
       themeToggle.addEventListener("click", () => {
@@ -385,7 +399,7 @@
         e.preventDefault();
         createContainer.style.display = "block";
         retrieveContainer.style.display = "none";
-        result.style.display = codeDisplay.textContent ? "block" : "none"; // Keep code visible if exists
+        result.style.display = codeDisplay.textContent ? "block" : "none";
         retrieveMessage.style.display = "none";
         createMessage.style.display = "none";
       });
@@ -415,6 +429,7 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text }),
+            cache: "no-store",
           });
           const data = await response.json();
 
@@ -427,8 +442,8 @@
               "success",
               "create"
             );
-            localStorage.setItem("lastGeneratedCode", data.code); // Store code
-            result.scrollIntoView({ behavior: "smooth" }); // Ensure code is visible
+            localStorage.setItem("lastGeneratedCode", data.code);
+            result.scrollIntoView({ behavior: "smooth" });
           } else {
             submitBtn.disabled = false;
             submitBtn.textContent = "Get Code";
@@ -480,20 +495,19 @@
         try {
           retrieveBtn.disabled = true;
           retrieveBtn.textContent = "Loading...";
+          retrieveLoading.style.display = "block";
 
-          const response = await fetch(`/api/retrieve/${code}`);
+          const response = await fetch(`/api/retrieve/${code}`, {
+            cache: "no-store",
+          });
           const data = await response.json();
 
           if (response.ok) {
             textContent.textContent = data.text;
             retrievedText.style.display = "block";
-            // Remove any existing expiration text before adding new one
             const existingExpiry =
               retrievedText.querySelector("p[data-expiry]");
-            if (existingExpiry) {
-              existingExpiry.remove();
-            }
-
+            if (existingExpiry) existingExpiry.remove();
             const expiresAt = new Date(
               Date.now() + 24 * 60 * 60 * 1000
             ).toLocaleString();
@@ -519,11 +533,13 @@
 
           retrieveBtn.disabled = false;
           retrieveBtn.textContent = "Show Message";
+          retrieveLoading.style.display = "none";
         } catch (error) {
           showMessage("Can't reach the server.", "error", "retrieve");
           retrievedText.style.display = "none";
           retrieveBtn.disabled = false;
           retrieveBtn.textContent = "Show Message";
+          retrieveLoading.style.display = "none";
         }
       });
 
