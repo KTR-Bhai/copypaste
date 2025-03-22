@@ -15,14 +15,13 @@ logger = logging.getLogger(__name__)
 # SQLite database path (Render uses /data, local uses current directory)
 DB_PATH = os.environ.get("DB_PATH", "/data/text_storage.db" if os.path.exists("/data") else "text_storage.db")
 
-# SQLite connection pool settings
+# SQLite connection settings
 sqlite3.enable_callback_tracebacks(True)  # For debugging
 
 @contextmanager
 def get_db_connection():
-    """Reusable SQLite connection with timeout and WAL mode"""
+    """Reusable SQLite connection with timeout"""
     conn = sqlite3.connect(DB_PATH, timeout=10)  # 10-second timeout
-    conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging for better concurrency
     conn.execute("PRAGMA busy_timeout = 10000")  # 10-second busy timeout
     try:
         yield conn
@@ -30,10 +29,13 @@ def get_db_connection():
         conn.close()
 
 def init_db():
-    """Initialize SQLite database with texts table"""
+    """Initialize SQLite database with texts table and WAL mode"""
     with get_db_connection() as conn:
         try:
             cursor = conn.cursor()
+            # Set WAL mode once during initialization
+            cursor.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging for better concurrency
+            logger.info(f"Journal mode set to: {cursor.fetchone()[0]}")
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS texts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
