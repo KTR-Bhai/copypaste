@@ -1,1 +1,1 @@
-web: gunicorn --workers 2 --threads 4 --timeout 30 --preload app:app
+web: gunicorn --workers 1 --threads 2 --timeout 30 --preload app:app
