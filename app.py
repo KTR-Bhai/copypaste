@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory, make_response
+from flask import Flask, request, jsonify, send_from_directory
 import psycopg2
 from psycopg2 import pool
 import random
@@ -7,13 +7,15 @@ import os
 import logging
 from contextlib import contextmanager
 import urllib.parse as urlparse
+from dotenv import load_dotenv
 
-# Setup Flask app and logging
+# Load .env for local dev (ignored on Render if not present)
+load_dotenv()
+
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global variables for database connection - NO IMMEDIATE CONNECTION
 db_pool = None
 DB_PARAMS = None
 
@@ -26,22 +28,18 @@ def initialize_database():
 
     logger.info("Initializing database connection...")
 
-    # Get DATABASE_URL from environment
     DB_URL = os.environ.get("DATABASE_URL")
-    if not DB_URL:
-        logger.error("DATABASE_URL not set. Available env vars: %s", list(os.environ.keys()))
-        raise ValueError("DATABASE_URL environment variable not set")
+    logger.info(f"DATABASE_URL from env: {DB_URL}")
 
-    logger.info("DATABASE_URL found, parsing...")
+    if not DB_URL or not DB_URL.startswith("postgresql://"):
+        logger.error("DATABASE_URL not set or invalid format")
+        raise ValueError("DATABASE_URL environment variable not set or invalid")
 
-    # Parse the DATABASE_URL
     try:
         url = urlparse.urlparse(DB_URL)
-
         if not all([url.scheme, url.username, url.password, url.hostname, url.path]):
             raise ValueError("Invalid DATABASE_URL format: missing required components")
 
-        # Ensure the path has a DB name
         dbname = url.path.lstrip("/")
         if not dbname:
             raise ValueError("Invalid DATABASE_URL format: missing database name")
@@ -59,37 +57,28 @@ def initialize_database():
             "connect_timeout": 10
         }
 
-        logger.info(f"Connecting to database: host={url.hostname}, dbname={dbname}, sslmode={sslmode}")
+        logger.info(f"Parsed DB params: host={url.hostname}, db={dbname}, sslmode={sslmode}")
     except Exception as e:
         logger.error(f"Failed to parse DATABASE_URL: {str(e)}")
         raise
 
-    # Create connection pool with retry logic
     max_retries = 5
     for attempt in range(max_retries):
         try:
-            logger.info(f"Connection attempt {attempt + 1}/{max_retries}")
+            logger.info(f"DB connection attempt {attempt + 1}/{max_retries}")
             db_pool = psycopg2.pool.SimpleConnectionPool(1, 5, **DB_PARAMS)
-            logger.info("Database connection pool initialized successfully!")
+            logger.info("Database connection pool initialized")
             break
         except psycopg2.OperationalError as e:
-            logger.error(f"Database connection failed on attempt {attempt + 1}: {str(e)}")
+            logger.error(f"DB connection failed: {str(e)}")
             if attempt < max_retries - 1:
-                wait_time = 2 ** attempt  # Exponential backoff
-                logger.info(f"Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
+                time.sleep(2 ** attempt)
             else:
-                logger.error("All connection attempts failed")
                 raise
-        except Exception as e:
-            logger.error(f"Unexpected database error: {str(e)}")
-            raise
-
     return db_pool
 
 @contextmanager
 def get_db_connection():
-    """Get database connection from pool with lazy initialization"""
     pool = initialize_database()
     conn = pool.getconn()
     try:
@@ -98,7 +87,6 @@ def get_db_connection():
         pool.putconn(conn)
 
 def init_db():
-    """Initialize PostgreSQL database with texts table"""
     logger.info("Initializing database tables...")
     try:
         with get_db_connection() as conn:
@@ -114,53 +102,45 @@ def init_db():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_code ON texts (code)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON texts (created_at)")
             conn.commit()
-            logger.info("Database initialized with indexes")
+            logger.info("Database initialized")
     except Exception as e:
         logger.error(f"Database init error: {str(e)}", exc_info=True)
         raise
 
 def generate_code():
-    """Generate a unique 3-digit code"""
     digits = '0123456789'
     max_attempts = 10
     for _ in range(max_attempts):
         code = ''.join(random.choice(digits) for _ in range(3))
         with get_db_connection() as conn:
-            try:
-                cursor = conn.cursor()
-                cursor.execute("SELECT code FROM texts WHERE code = %s", (code,))
-                if not cursor.fetchone():
-                    return code
-            except Exception as e:
-                logger.error(f"Code generation error: {str(e)}", exc_info=True)
-    raise Exception("Failed to generate unique code after max attempts")
+            cursor = conn.cursor()
+            cursor.execute("SELECT code FROM texts WHERE code = %s", (code,))
+            if not cursor.fetchone():
+                return code
+    raise Exception("Failed to generate unique code")
 
-# Global variable to track last cleanup time
 LAST_CLEANUP = 0
-CLEANUP_INTERVAL = 300  # 5 minutes in seconds
+CLEANUP_INTERVAL = 300  # 5 minutes
 
 def cleanup_expired_texts(conn):
-    """Remove texts older than 24 hours, run only every 5 minutes"""
     global LAST_CLEANUP
     current_time = int(time.time())
     if current_time - LAST_CLEANUP < CLEANUP_INTERVAL:
-        return  # Skip if too soon
+        return
     try:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM texts WHERE created_at < %s", (current_time - 86400,))
-        deleted_count = cursor.rowcount
+        deleted = cursor.rowcount
         conn.commit()
-        if deleted_count > 0:
-            logger.info(f"Expired {deleted_count} texts during cleanup")
+        if deleted > 0:
+            logger.info(f"Deleted {deleted} expired texts")
         LAST_CLEANUP = current_time
     except Exception as e:
         logger.error(f"Cleanup error: {str(e)}", exc_info=True)
         conn.rollback()
 
-# Prevent caching for dynamic routes
 @app.after_request
 def add_no_cache(response):
-    """Add no-cache headers to all responses"""
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
@@ -168,7 +148,6 @@ def add_no_cache(response):
 
 @app.route('/')
 def index():
-    """Serve the index.html from static folder"""
     try:
         return send_from_directory('static', 'index.html')
     except Exception as e:
@@ -177,7 +156,6 @@ def index():
 
 @app.route('/health')
 def health_check():
-    """Health check endpoint that tests database connectivity"""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -190,7 +168,6 @@ def health_check():
 
 @app.route('/api/create', methods=['POST'])
 def create_text():
-    """Create a new text entry with a unique code"""
     data = request.get_json()
     if not data or 'text' not in data:
         return jsonify({'error': 'No text provided'}), 400
@@ -200,9 +177,7 @@ def create_text():
         return jsonify({'error': 'Text cannot be empty'}), 400
 
     try:
-        # Initialize database on first use
         init_db()
-
         with get_db_connection() as conn:
             cleanup_expired_texts(conn)
             code = generate_code()
@@ -221,7 +196,6 @@ def create_text():
 
 @app.route('/api/retrieve/<code>', methods=['GET'])
 def retrieve_text(code):
-    """Retrieve text by code, expiring if over 24 hours"""
     if not code or len(code) != 3 or not code.isdigit():
         return jsonify({'error': 'Invalid code format (must be 3 digits)'}), 400
 
@@ -231,14 +205,11 @@ def retrieve_text(code):
             cursor = conn.cursor()
             cursor.execute("SELECT text, created_at FROM texts WHERE code = %s", (code,))
             result = cursor.fetchone()
-
             if not result:
                 return jsonify({'error': 'Invalid code or text expired'}), 404
 
             text, created_at = result
-            current_time = int(time.time())
-
-            if current_time - created_at > 86400:
+            if int(time.time()) - created_at > 86400:
                 cursor.execute("DELETE FROM texts WHERE code = %s", (code,))
                 conn.commit()
                 logger.info(f"Code {code} expired and deleted")
