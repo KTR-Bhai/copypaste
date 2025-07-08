@@ -20,37 +20,46 @@ DB_PARAMS = None
 def initialize_database():
     """Initialize database connection lazily - only when needed"""
     global db_pool, DB_PARAMS
-    
+
     if db_pool is not None:
         return db_pool
-    
+
     logger.info("Initializing database connection...")
-    
+
     # Get DATABASE_URL from environment
     DB_URL = os.environ.get("DATABASE_URL")
     if not DB_URL:
         logger.error("DATABASE_URL not set. Available env vars: %s", list(os.environ.keys()))
         raise ValueError("DATABASE_URL environment variable not set")
-    
+
     logger.info("DATABASE_URL found, parsing...")
-    
+
     # Parse the DATABASE_URL
     try:
         url = urlparse.urlparse(DB_URL)
+
         if not all([url.scheme, url.username, url.password, url.hostname, url.path]):
-            raise ValueError("Invalid DATABASE_URL format")
-        
-        port = url.port if url.port is not None else 5432
+            raise ValueError("Invalid DATABASE_URL format: missing required components")
+
+        # Ensure the path has a DB name
+        dbname = url.path.lstrip("/")
+        if not dbname:
+            raise ValueError("Invalid DATABASE_URL format: missing database name")
+
+        query_params = urlparse.parse_qs(url.query)
+        sslmode = query_params.get("sslmode", ["require"])[0]
+
         DB_PARAMS = {
-            "dbname": url.path[1:],  # Remove leading '/'
+            "dbname": dbname,
             "user": url.username,
             "password": url.password,
             "host": url.hostname,
-            "port": port,
-            "sslmode": "require",
+            "port": url.port or 5432,
+            "sslmode": sslmode,
             "connect_timeout": 10
         }
-        logger.info(f"Connecting to database: host={url.hostname}, port={port}, dbname={DB_PARAMS['dbname']}")
+
+        logger.info(f"Connecting to database: host={url.hostname}, dbname={dbname}, sslmode={sslmode}")
     except Exception as e:
         logger.error(f"Failed to parse DATABASE_URL: {str(e)}")
         raise
@@ -75,7 +84,7 @@ def initialize_database():
         except Exception as e:
             logger.error(f"Unexpected database error: {str(e)}")
             raise
-    
+
     return db_pool
 
 @contextmanager
@@ -185,15 +194,15 @@ def create_text():
     data = request.get_json()
     if not data or 'text' not in data:
         return jsonify({'error': 'No text provided'}), 400
-    
+
     text = data['text'].strip()
     if not text:
         return jsonify({'error': 'Text cannot be empty'}), 400
-    
+
     try:
         # Initialize database on first use
         init_db()
-        
+
         with get_db_connection() as conn:
             cleanup_expired_texts(conn)
             code = generate_code()
@@ -215,26 +224,26 @@ def retrieve_text(code):
     """Retrieve text by code, expiring if over 24 hours"""
     if not code or len(code) != 3 or not code.isdigit():
         return jsonify({'error': 'Invalid code format (must be 3 digits)'}), 400
-    
+
     try:
         with get_db_connection() as conn:
             cleanup_expired_texts(conn)
             cursor = conn.cursor()
             cursor.execute("SELECT text, created_at FROM texts WHERE code = %s", (code,))
             result = cursor.fetchone()
-            
+
             if not result:
                 return jsonify({'error': 'Invalid code or text expired'}), 404
-            
+
             text, created_at = result
             current_time = int(time.time())
-            
+
             if current_time - created_at > 86400:
                 cursor.execute("DELETE FROM texts WHERE code = %s", (code,))
                 conn.commit()
                 logger.info(f"Code {code} expired and deleted")
                 return jsonify({'error': 'Text has expired'}), 404
-            
+
             logger.info(f"Text retrieved for code: {code}")
             return jsonify({'text': text}), 200
     except Exception as e:
