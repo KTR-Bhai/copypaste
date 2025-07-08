@@ -13,56 +13,86 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Get DATABASE_URL from environment (Render uses internal URL)
-DB_URL = os.environ.get("DATABASE_URL")
-if not DB_URL:
-    DB_URL = os.environ.get("DATABASE_URL_LOCAL", None)
+# Global variables for database connection - NO IMMEDIATE CONNECTION
+db_pool = None
+DB_PARAMS = None
+
+def initialize_database():
+    """Initialize database connection lazily - only when needed"""
+    global db_pool, DB_PARAMS
+    
+    if db_pool is not None:
+        return db_pool
+    
+    logger.info("Initializing database connection...")
+    
+    # Get DATABASE_URL from environment
+    DB_URL = os.environ.get("DATABASE_URL")
     if not DB_URL:
-        logger.warning("DATABASE_URL not set. For local testing, set it (e.g., 'postgresql://user:password@host:port/dbname').")
-        raise ValueError("DATABASE_URL not set. Set it in your environment or Render's 'teju' group.")
+        logger.error("DATABASE_URL not set. Available env vars: %s", list(os.environ.keys()))
+        raise ValueError("DATABASE_URL environment variable not set")
+    
+    logger.info("DATABASE_URL found, parsing...")
+    
+    # Parse the DATABASE_URL
+    try:
+        url = urlparse.urlparse(DB_URL)
+        if not all([url.scheme, url.username, url.password, url.hostname, url.path]):
+            raise ValueError("Invalid DATABASE_URL format")
+        
+        port = url.port if url.port is not None else 5432
+        DB_PARAMS = {
+            "dbname": url.path[1:],  # Remove leading '/'
+            "user": url.username,
+            "password": url.password,
+            "host": url.hostname,
+            "port": port,
+            "sslmode": "require",
+            "connect_timeout": 10
+        }
+        logger.info(f"Connecting to database: host={url.hostname}, port={port}, dbname={DB_PARAMS['dbname']}")
+    except Exception as e:
+        logger.error(f"Failed to parse DATABASE_URL: {str(e)}")
+        raise
 
-# Parse the DATABASE_URL and validate it
-try:
-    url = urlparse.urlparse(DB_URL)
-    if not all([url.scheme, url.username, url.password, url.hostname, url.path]):
-        raise ValueError("Invalid DATABASE_URL format. Missing required components (scheme, user, password, host, dbname).")
-    port = url.port if url.port is not None else 5432  # Default to 5432 if port is missing
-    DB_PARAMS = {
-        "dbname": url.path[1:],  # Remove leading '/'
-        "user": url.username,
-        "password": url.password,
-        "host": url.hostname,
-        "port": port
-    }
-    logger.info(f"Parsed DATABASE_URL: host={url.hostname}, port={port}, dbname={DB_PARAMS['dbname']}")
-except ValueError as e:
-    logger.error(f"Failed to parse DATABASE_URL: {str(e)}")
-    raise
-except Exception as e:
-    logger.error(f"Unexpected error parsing DATABASE_URL: {str(e)}")
-    raise
-
-# Connection pool for PostgreSQL with min 2 connections to reduce cold starts
-try:
-    db_pool = psycopg2.pool.SimpleConnectionPool(2, 10, **DB_PARAMS)
-    logger.info("Database connection pool initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize database pool: {str(e)}")
-    raise
+    # Create connection pool with retry logic
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Connection attempt {attempt + 1}/{max_retries}")
+            db_pool = psycopg2.pool.SimpleConnectionPool(1, 5, **DB_PARAMS)
+            logger.info("Database connection pool initialized successfully!")
+            break
+        except psycopg2.OperationalError as e:
+            logger.error(f"Database connection failed on attempt {attempt + 1}: {str(e)}")
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff
+                logger.info(f"Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                logger.error("All connection attempts failed")
+                raise
+        except Exception as e:
+            logger.error(f"Unexpected database error: {str(e)}")
+            raise
+    
+    return db_pool
 
 @contextmanager
 def get_db_connection():
-    """Reusable PostgreSQL connection from pool"""
-    conn = db_pool.getconn()
+    """Get database connection from pool with lazy initialization"""
+    pool = initialize_database()
+    conn = pool.getconn()
     try:
         yield conn
     finally:
-        db_pool.putconn(conn)
+        pool.putconn(conn)
 
 def init_db():
     """Initialize PostgreSQL database with texts table"""
-    with get_db_connection() as conn:
-        try:
+    logger.info("Initializing database tables...")
+    try:
+        with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS texts (
@@ -76,16 +106,12 @@ def init_db():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON texts (created_at)")
             conn.commit()
             logger.info("Database initialized with indexes")
-        except Exception as e:
-            logger.error(f"Database init error: {str(e)}", exc_info=True)
-            conn.rollback()
-
-# Run database initialization
-init_db()
+    except Exception as e:
+        logger.error(f"Database init error: {str(e)}", exc_info=True)
+        raise
 
 def generate_code():
     """Generate a unique 3-digit code"""
-    start_time = time.time()
     digits = '0123456789'
     max_attempts = 10
     for _ in range(max_attempts):
@@ -95,7 +121,6 @@ def generate_code():
                 cursor = conn.cursor()
                 cursor.execute("SELECT code FROM texts WHERE code = %s", (code,))
                 if not cursor.fetchone():
-                    logger.info(f"Code generation took {time.time() - start_time:.2f} seconds")
                     return code
             except Exception as e:
                 logger.error(f"Code generation error: {str(e)}", exc_info=True)
@@ -108,7 +133,6 @@ CLEANUP_INTERVAL = 300  # 5 minutes in seconds
 def cleanup_expired_texts(conn):
     """Remove texts older than 24 hours, run only every 5 minutes"""
     global LAST_CLEANUP
-    start_time = time.time()
     current_time = int(time.time())
     if current_time - LAST_CLEANUP < CLEANUP_INTERVAL:
         return  # Skip if too soon
@@ -120,7 +144,6 @@ def cleanup_expired_texts(conn):
         if deleted_count > 0:
             logger.info(f"Expired {deleted_count} texts during cleanup")
         LAST_CLEANUP = current_time
-        logger.info(f"Cleanup took {time.time() - start_time:.2f} seconds")
     except Exception as e:
         logger.error(f"Cleanup error: {str(e)}", exc_info=True)
         conn.rollback()
@@ -136,20 +159,29 @@ def add_no_cache(response):
 
 @app.route('/')
 def index():
-    """Serve the index.html from static folder with no caching"""
-    start_time = time.time()
+    """Serve the index.html from static folder"""
     try:
-        response = make_response(send_from_directory('static', 'index.html'))
-        logger.info(f"Serving index.html took {time.time() - start_time:.2f} seconds")
-        return response
+        return send_from_directory('static', 'index.html')
     except Exception as e:
-        logger.error(f"Error serving index.html: {str(e)}", exc_info=True)
+        logger.error(f"Error serving index.html: {str(e)}")
         return jsonify({'error': 'Server error'}), 500
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint that tests database connectivity"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+        return jsonify({'status': 'healthy', 'database': 'connected'}), 200
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
 
 @app.route('/api/create', methods=['POST'])
 def create_text():
     """Create a new text entry with a unique code"""
-    start_time = time.time()
     data = request.get_json()
     if not data or 'text' not in data:
         return jsonify({'error': 'No text provided'}), 400
@@ -158,42 +190,38 @@ def create_text():
     if not text:
         return jsonify({'error': 'Text cannot be empty'}), 400
     
-    with get_db_connection() as conn:
-        try:
-            cleanup_expired_texts(conn)  # Runs only if 5 minutes have passed
+    try:
+        # Initialize database on first use
+        init_db()
+        
+        with get_db_connection() as conn:
+            cleanup_expired_texts(conn)
             code = generate_code()
             current_time = int(time.time())
             cursor = conn.cursor()
-            insert_start = time.time()
             cursor.execute(
                 "INSERT INTO texts (code, text, created_at) VALUES (%s, %s, %s)",
                 (code, text, current_time)
             )
             conn.commit()
-            logger.info(f"Insert took {time.time() - insert_start:.2f} seconds")
             logger.info(f"Text created with code: {code}")
-            logger.info(f"Total /api/create took {time.time() - start_time:.2f} seconds")
             return jsonify({'code': code}), 201
-        except Exception as e:
-            logger.error(f"Error in /api/create: {str(e)}", exc_info=True)
-            conn.rollback()
-            return jsonify({'error': 'Server error'}), 500
+    except Exception as e:
+        logger.error(f"Error in /api/create: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Server error'}), 500
 
 @app.route('/api/retrieve/<code>', methods=['GET'])
 def retrieve_text(code):
     """Retrieve text by code, expiring if over 24 hours"""
-    start_time = time.time()
     if not code or len(code) != 3 or not code.isdigit():
         return jsonify({'error': 'Invalid code format (must be 3 digits)'}), 400
     
-    with get_db_connection() as conn:
-        try:
-            cleanup_expired_texts(conn)  # Runs only if 5 minutes have passed
+    try:
+        with get_db_connection() as conn:
+            cleanup_expired_texts(conn)
             cursor = conn.cursor()
-            select_start = time.time()
             cursor.execute("SELECT text, created_at FROM texts WHERE code = %s", (code,))
             result = cursor.fetchone()
-            logger.info(f"Select took {time.time() - select_start:.2f} seconds")
             
             if not result:
                 return jsonify({'error': 'Invalid code or text expired'}), 404
@@ -202,22 +230,17 @@ def retrieve_text(code):
             current_time = int(time.time())
             
             if current_time - created_at > 86400:
-                delete_start = time.time()
                 cursor.execute("DELETE FROM texts WHERE code = %s", (code,))
                 conn.commit()
-                logger.info(f"Delete took {time.time() - delete_start:.2f} seconds")
                 logger.info(f"Code {code} expired and deleted")
                 return jsonify({'error': 'Text has expired'}), 404
             
             logger.info(f"Text retrieved for code: {code}")
-            logger.info(f"Total /api/retrieve took {time.time() - start_time:.2f} seconds")
             return jsonify({'text': text}), 200
-        except Exception as e:
-            logger.error(f"Error in /api/retrieve: {str(e)}", exc_info=True)
-            return jsonify({'error': 'Server error'}), 500
+    except Exception as e:
+        logger.error(f"Error in /api/retrieve: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Server error'}), 500
 
 if __name__ == '__main__':
-    if not os.path.exists('static'):
-        os.makedirs('static')
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=False)
