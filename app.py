@@ -7,10 +7,6 @@ import os
 import logging
 from contextlib import contextmanager
 import urllib.parse as urlparse
-from dotenv import load_dotenv
-
-# Load .env for local dev (ignored on Render if not present)
-load_dotenv()
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +16,6 @@ db_pool = None
 DB_PARAMS = None
 
 def initialize_database():
-    """Initialize database connection lazily - only when needed"""
     global db_pool, DB_PARAMS
 
     if db_pool is not None:
